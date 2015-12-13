@@ -1,0 +1,37 @@
+{
+  "name": "i18nify",
+  "version": "0.0.0",
+  "description": "An internationalization plugin for browserify",
+  "main": "plugin.js",
+  "browser": "empty.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "browserify",
+    "browserify-plugin",
+    "i18n",
+    "internationalization"
+  ],
+  "author": "Christian Tellnes <christian@tellnes.no> (http://christian.tellnes.com/)",
+  "license": "MIT",
+  "dependencies": {
+    "acorn": "^2.6.4",
+    "browser-pack": "github:tellnes/browser-pack#ig",
+    "defined": "^1.0.0",
+    "escodegen": "^1.7.1",
+    "estraverse": "^4.1.1",
+    "labeled-stream-splicer": "^2.0.0",
+    "through2": "^2.0.0",
+    "xtend": "^4.0.1"
+  },
+  "devDependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tellnes/i18nify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tellnes/i18nify/issues"
+  },
+  "homepage": "https://github.com/tellnes/i18nify#readme"
+}
