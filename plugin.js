@@ -10,6 +10,7 @@ const escodegen = require('escodegen')
 const splicer = require('labeled-stream-splicer')
 const xtend = require('xtend')
 const bpack = require('browser-pack')
+const combineSourceMap = require('combine-source-map')
 
 
 const EMPTY = path.join(__dirname, 'empty.js')
@@ -185,8 +186,19 @@ module.exports = function(b, pOptions) {
     function finish() {
       if (--counter) return
 
-      if (changed)
-        row.source = escodegen.generate(ast)
+      if (changed) {
+        let sm = combineSourceMap.create()
+        sm.addFile(
+            { sourceFile: row.file
+            , source: row.source
+            }
+          , { line: 1 }
+          )
+        row.source =
+          combineSourceMap.removeComments( escodegen.generate(ast) ) +
+          '\n' +
+          sm.comment()
+      }
 
       pushFn.call(b._mdeps, row)
 
