@@ -1,6 +1,6 @@
 {
   "name": "i18nify",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "An internationalization plugin for browserify",
   "main": "plugin.js",
   "browser": "empty.js",
