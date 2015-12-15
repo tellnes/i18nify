@@ -44,7 +44,7 @@ module.exports = function(b, pOptions) {
   b._bpack.hasExports = true
 
 
-  // We need to do call b._mdeps.walk() on our dependencies before module-deps
+  // We need to call b._mdeps.walk() on our dependencies before module-deps
   // sends of EOF.
   const pushFn = b._mdeps.push
   b._mdeps.push = function(row) {
