@@ -32,6 +32,12 @@ module.exports = function(b, pOptions) {
   if (!languages.length)
     throw new Error('i18n: You must specify at least one language')
 
+  const noParse = []
+    .concat(pOptions.noparse || [])
+    .concat(pOptions.noParse || [])
+    .concat(Array.isArray(bOptions.noParse) ? bOptions.noParse : [])
+
+
   const map = {}
   const pipelines = {}
 
@@ -56,14 +62,14 @@ module.exports = function(b, pOptions) {
       return
     }
 
-    if (!/\.js$/.test(row.file) ||
-        bOptions.noParse === true ||
-        ( Array.isArray(bOptions.noParse) &&
-          ~bOptions.noParse.indexOf(row.file)
-        )
-      ) {
+    const parse =
+      !~noParse.indexOf(row.file) &&
+      /\.js$/.test(row.file) &&
+      /['"]i18nify['"]/.test(row.source) &&
+      true
+
+    if (!parse)
       return pushFn.call(b._mdeps, row)
-    }
 
     pending++
 
