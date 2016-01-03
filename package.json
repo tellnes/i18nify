@@ -21,7 +21,7 @@
     "browser-pack": "https://github.com/tellnes/browser-pack/releases/download/v7.0.0-ig1/browser-pack-7.0.0-ig1.tgz",
     "combine-source-map": "~0.7.1",
     "defined": "^1.0.0",
-    "escodegen": "^1.7.1",
+    "escodegen": "^1.8.0",
     "estraverse": "^4.1.1",
     "labeled-stream-splicer": "^2.0.0",
     "through2": "^2.0.0",
