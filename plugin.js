@@ -32,6 +32,12 @@ module.exports = function(b, pOptions) {
   if (!languages.length)
     throw new Error('i18n: You must specify at least one language')
 
+  for (let i = 0; i < languages.length; i++) {
+    languages[i] = languages[i].toLowerCase().split(/[_-]/)
+    languages[i].toString = function() { return this.join('-') }
+    languages[i].toJSON = languages[i].toString
+  }
+
   const noParse = []
     .concat(pOptions.noparse || [])
     .concat(pOptions.noParse || [])
@@ -154,10 +160,18 @@ module.exports = function(b, pOptions) {
         )
 
       languages.forEach(lang => {
-        const idl = id.replace(/%s/, lang)
+        const idls = []
+        if (lang.length > 1) {
+          idls.push(lang.join('-'))
+          idls.push(lang.join('_'))
+        }
+        idls.push(lang[0])
+        for (let i = 0; i < idls.length; i++) {
+          idls[i] = id.replace(/%s/, idls[i])
+        }
 
         counter++
-        b._mdeps.resolve(idl, current, (err, file) => {
+        resolveIdl(b, current, idls, 0, (err, file) => {
           if (err && ignoreMissing) {
             file = EMPTY
           } else if (err) return b.emit('error', err)
@@ -263,6 +277,18 @@ module.exports = function(b, pOptions) {
     cb()
   }))
 
+}
+
+function resolveIdl(b, current, idls, index, cb) {
+  b._mdeps.resolve(idls[index++], current, (err, file) => {
+    if (err) {
+      if (idls[index]) err = null
+      else return cb(err)
+    }
+    if (!file && idls[index])
+      return resolveIdl(b, current, idls, index, cb)
+    cb(null, file)
+  })
 }
 
 
