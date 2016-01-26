@@ -151,7 +151,9 @@ module.exports = function(b, pOptions) {
 
       const ignoreMissing = defined(
           rOptions.ignoreMissing
+        , rOptions.im
         , pOptions.ignoreMissing
+        , pOptions.im
         , bOptions.ignoreMissing
         )
       const noParse = defined(
@@ -176,7 +178,7 @@ module.exports = function(b, pOptions) {
             file = EMPTY
           } else if (err) return b.emit('error', err)
 
-          if (map[file]) {
+          if (map[file] && file !== EMPTY) {
             row.i18nify.deps[id] = map[file]
             finish()
             return
