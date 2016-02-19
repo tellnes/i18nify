@@ -1,306 +1,125 @@
 'use strict'
 
-const path = require('path')
-const fs = require('fs')
 const through = require('through2')
 const defined = require('defined')
-const acorn = require('acorn')
-const estraverse = require('estraverse')
-const escodegen = require('escodegen')
 const splicer = require('labeled-stream-splicer')
 const xtend = require('xtend')
 const bpack = require('browser-pack')
-const combineSourceMap = require('combine-source-map')
+const outpipe = require('outpipe')
+const transform = require('./transform')
+const common = require('./common')
 
 
-const EMPTY = path.join(__dirname, 'empty.js')
+module.exports = function(br, bOptions) {
+  const options = common.readOptions(bOptions)
+  const languages = options.languages
 
+  br._bpack.hasExports = true
 
-module.exports = function(b, pOptions) {
-  const bOptions = b._options
-
-  const outdir =
-    path.resolve(
-        defined(pOptions.basedir, bOptions.basedir, process.cwd())
-      , defined(pOptions.o, pOptions.outdir, './locale')
-      )
-
-  const languages = []
-    .concat(pOptions._ || [])
-    .concat(pOptions.l || [])
-    .concat(pOptions.lang || [])
-  if (!languages.length)
-    throw new Error('i18n: You must specify at least one language')
-
-  for (let i = 0; i < languages.length; i++) {
-    languages[i] = languages[i].toLowerCase().split(/[_-]/)
-    languages[i].toString = function() { return this.join('-') }
-    languages[i].toJSON = languages[i].toString
-  }
-
-  const noParse = []
-    .concat(pOptions.noparse || [])
-    .concat(pOptions.noParse || [])
-    .concat(Array.isArray(bOptions.noParse) ? bOptions.noParse : [])
-
+  const trOptions =
+    { languages
+    , default: options.default
+    }
+  br.transform(transform, trOptions)
 
   const map = {}
-  const pipelines = {}
+  const take = {}
 
-  var exposeCounter = 0
-  var pending = 0
-  var ended = false
-  var pushedLangCode = false
-
-  b.ignore('i18nify')
-  b._bpack.hasExports = true
-
-
-  // We need to call b._mdeps.walk() on our dependencies before module-deps
-  // sends of EOF.
-  const pushFn = b._mdeps.push
-  b._mdeps.push = function(row) {
-    if (row === null) {
-      if (pending)
-        ended = true
-      else
-        pushFn.call(b._mdeps, null)
-      return
-    }
-
-    const parse =
-      !~noParse.indexOf(row.file) &&
-      /\.js$/.test(row.file) &&
-      /['"]i18nify['"]/.test(row.source) &&
-      true
-
-    if (!parse)
-      return pushFn.call(b._mdeps, row)
-
-    pending++
-
-    let counter = 0
-    let changed = false
-
-    const current =
-      { id: row.file
-      , filename: row.file
-      , paths: b._mdeps.paths
-      }
-
-    const ast = acorn.parse(
-        row.source
-      , { ecmaVersion: 6
-        , allowReturnOutsideFunction: true
-        }
-      )
-    estraverse.replace(ast, { leave })
-
-    function leave(node) {
-      const args = node.arguments
-      if (node.type !== 'CallExpression' ||
-          node.callee.type !== 'Identifier' ||
-          node.callee.name !== 'require' ||
-          args[0].type !== 'Literal' ||
-          args[0].value !== 'i18nify'
-        ) return
-
-      if (!row.i18nify) row.i18nify = {}
-      if (!row.i18nify.deps) row.i18nify.deps = {}
-
-      const id = args[1] && args[1].value
-
-      if (!id) { // Require lang code
-        if (!pushedLangCode) {
-          pushedLangCode = true
-
-          b._expose['i18nify:0'] = 'i18nify:0'
-          languages.forEach(lang => {
-            const rec =
-              { id: 'i18nify:0'
-              , expose: 'i18nify:0'
-              , source: 'module.exports=' + JSON.stringify(lang)
-              , deps: {}
-              , file: path.join(__dirname, '__fake_' + lang + '.js')
-              , i18nify: { lang }
-              , noparse: true
-              }
-            pushFn.call(b._mdeps, rec)
-          })
-        }
-
-        row.i18nify.deps['i18nify'] = 'i18nify:0'
-        return
-      }
-
-      // Require lang file
-
-      changed = true
-      node.arguments =
-        [ { type: 'Literal'
-          , value: id
-          }
-        ]
-
-      // Dep required
-      if (row.i18nify.deps[id])
-        return node
-
-      const expose = 'i18nify:' + (++exposeCounter)
-      const rOptions = parseOptions(row.source, args[2])
-
-      const ignoreMissing = defined(
-          rOptions.ignoreMissing
-        , rOptions.im
-        , pOptions.ignoreMissing
-        , pOptions.im
-        , bOptions.ignoreMissing
-        )
-      const noParse = defined(
-          rOptions.noParse
-        , pOptions.noParse
-        )
-
-      languages.forEach(lang => {
-        const idls = []
-        if (lang.length > 1) {
-          idls.push(lang.join('-'))
-          idls.push(lang.join('_'))
-        }
-        idls.push(lang[0])
-        for (let i = 0; i < idls.length; i++) {
-          idls[i] = id.replace(/%s/, idls[i])
-        }
-
-        counter++
-        resolveIdl(b, current, idls, 0, (err, file) => {
-          if (err && ignoreMissing) {
-            file = EMPTY
-          } else if (err) return b.emit('error', err)
-
-          if (map[file] && file !== EMPTY) {
-            row.i18nify.deps[id] = map[file]
-            finish()
-            return
-          }
-
-          map[file] = expose
-          row.i18nify.deps[id] = expose
-
-          const rec =
-            { id: expose
-            , expose: expose
-            , file: file
-            , i18nify: { lang }
-            , noparse: noParse
-            }
-
-          b._mdeps.walk(rec, current, finish)
-        })
+  br.on('transform', (tr) => {
+    tr.on('i18nify', (file, id) => {
+      const lmap = map[file] || (map[file] = {})
+      languages.forEach((lang) => {
+        lmap[ id.replace(/%s/, lang) ] = lang
       })
+    })
+  })
 
-      return node
-    } // function leave()
 
-    counter++
-    finish()
+  // This is undocumented because it relates to how i18nify works internaly.
+  // If you want to use it, please open an issue. I'll probably document it and
+  // removes this comment.
+  const prelude = defined(bOptions.prelude, true)
 
-    function finish() {
-      if (--counter) return
-
-      if (changed) {
-        let sm = combineSourceMap.create()
-        sm.addFile(
-            { sourceFile: row.file
-            , source: row.source
-            }
-          , { line: 1 }
-          )
-        row.source =
-          combineSourceMap.removeComments( escodegen.generate(ast) ) +
-          '\n' +
-          sm.comment()
-      }
-
-      pushFn.call(b._mdeps, row)
-
-      pending--
-      if (!pending && ended)
-        pushFn.call(b._mdeps, null)
-    }
-  } // b._mdeps.push
-
-  b.pipeline.get('dedupe').unshift(through.obj(function(row, enc, cb) {
-    if (row.i18nify && row.i18nify.lang) {
-      if (row.dedupe)
-        row.dedupe = null
-      if (row.dedupeIndex)
-        row.dedupeIndex = null
-    }
-    cb(null, row)
-  }))
-
-  b.pipeline.get('label').push(through.obj(function(row, enc, cb) {
-    if (row.indexDeps && row.i18nify && row.i18nify.deps) {
-      Object.keys(row.i18nify.deps).forEach(id => {
-        row.indexDeps[id] = row.i18nify.deps[id]
-      })
-    }
-    cb(null, row)
-  }))
-
-  const lPackOpts = xtend(bOptions,
+  // Setup language pipelines
+  const bpackOptions = xtend(br._options,
     { raw: true
     , hasExports: true
     })
 
+  const splitPipeline = (pipeline, outStr, file) => {
+    const pipelines = languages.reduce((pipelines, lang) => {
+      pipelines[lang] = splicer.obj(
+        [ 'pack', [ bpack(bpackOptions) ]
+        , 'wrap', [ ]
+        ])
+
+      const env = xtend(process.env
+        , { LANG: lang
+          , FILE: file
+          }
+        )
+      const out = outpipe(outStr.replace(/%s/, lang), env)
+
+      if (prelude)
+        out.write('I18NIFY=' + JSON.stringify(lang) + ';')
+
+      pipelines[lang].pipe(out)
+
+      br.emit('i18nify.pipeline', lang, pipelines[lang])
+
+      return pipelines
+    }, {})
+
+    pipeline.get('pack').unshift(through.obj(function(row, enc, cb) {
+      common.realpath(row.file, (err, file) => {
+        if (err) return cb(err)
+
+        if (take[file])
+          pipelines[take[file]].write(row)
+        else
+          this.push(row)
+
+        cb()
+      })
+    }, function(cb) {
+      languages.forEach(lang => pipelines[lang].end())
+      cb()
+    }))
+  }
 
 
-  languages.forEach(lang => {
-    pipelines[lang] = splicer.obj(
-      [ 'pack', [ bpack(lPackOpts) ]
-      , 'wrap', []
-      ]
-      )
-    pipelines[lang].pipe(fs.createWriteStream(path.join(outdir, lang + '.js')))
+  const output = defined(bOptions.output, bOptions.o)
 
-    b.emit('i18nify.pipeline', pipelines[lang], lang)
-  })
+  const factor = defined(bOptions.factorBundle, bOptions['factor-bundle'])
+  let factorIndex = 0
+  if (factor) {
+    br.on('factor.pipeline', (file, pipeline) => {
+      const output = Array.isArray(factor) ? factor[factorIndex++] : factor
+      splitPipeline(pipeline, output, file)
+    })
+  }
 
-  b.pipeline.get('pack').unshift(through.obj(function(row, enc, cb) {
-    if (row.i18nify && row.i18nify.lang)
-      pipelines[row.i18nify.lang].write(row)
-    else
-      this.push(row)
+  const addHooks = () => {
+    factorIndex = 0
 
-    cb()
-  }, function(cb) {
-    languages.forEach(lang => pipelines[lang].end())
-    cb()
-  }))
+    br.pipeline.get('deps').push(through.obj(function(row, enc, cb) {
+      common.realpath(row.file, (err, file) => {
+        if (err) return cb(err)
+        // row.file = file
 
-}
+        row.i18nify = row.i18nify || map[file]
+        if (row.i18nify)
+          Object.keys(row.deps)
+            .filter((id) => row.i18nify[id])
+            .forEach((id) => take[row.deps[id]] = row.i18nify[id])
 
-function resolveIdl(b, current, idls, index, cb) {
-  b._mdeps.resolve(idls[index++], current, (err, file) => {
-    if (err) {
-      if (idls[index]) err = null
-      else return cb(err)
-    }
-    if (!file && idls[index])
-      return resolveIdl(b, current, idls, index, cb)
-    cb(null, file)
-  })
-}
+        cb(null, row)
+      })
+    }))
 
+    splitPipeline(br.pipeline, output, '')
+  }
+  br.on('reset', addHooks)
+  addHooks()
 
-function parseOptions(source, node) {
-  if (!node || node.type !== 'ObjectExpression')
-    return {}
-
-  const src = 'return ' + source.slice(node.start, node.end)
-
-  /*jshint -W054 */
-  return (new Function([], src))()
-  /*jshint +W054 */
 }
